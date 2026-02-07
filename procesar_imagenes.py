@@ -5,6 +5,15 @@
    para que el resultado se vea natural.
 2) Si la imagen resultante supera el tamaño objetivo, la reduce a 1024x1024 con
    remuestreo de alta calidad (LANCZOS).
+
+Uso rápido:
+    python procesar_imagenes.py ./mis_imagenes ./salida
+
+También puedes usar banderas explícitas:
+    python procesar_imagenes.py --input-dir ./mis_imagenes --output-dir ./salida
+
+Modo interactivo:
+    python procesar_imagenes.py --interactive
 """
 
 from __future__ import annotations
@@ -152,12 +161,60 @@ def build_output_path(src: Path, input_dir: Path, output_dir: Path, out_format: 
     return output_dir / rel
 
 
+
+def prompt_for_path(message: str, default: Path) -> Path:
+    raw = input(f"{message} [{default}]: ").strip()
+    return Path(raw).expanduser() if raw else default
+
+
+def interactive_paths() -> tuple[Path, Path]:
+    cwd = Path.cwd()
+    print("Modo interactivo de rutas")
+    print("1) Usar rutas personalizadas")
+    print("2) Usar carpeta actual como entrada y ./salida_procesada como salida")
+
+    choice = input("Selecciona una opción [1/2] (default 2): ").strip() or "2"
+
+    if choice == "1":
+        input_dir = prompt_for_path("Ruta de entrada", cwd)
+        output_dir = prompt_for_path("Ruta de salida", cwd / "salida_procesada")
+        return input_dir, output_dir
+
+    if choice == "2":
+        return cwd, cwd / "salida_procesada"
+
+    raise SystemExit("Opción inválida en modo interactivo. Usa 1 o 2.")
+
+def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    if args.interactive:
+        return interactive_paths()
+
+    input_dir = args.input_dir or args.input_dir_flag
+    output_dir = args.output_dir or args.output_dir_flag
+
+    if input_dir is None or output_dir is None:
+        raise SystemExit(
+            "Debes indicar rutas de entrada y salida o usar --interactive.\n"
+            "Ejemplo: python procesar_imagenes.py ./imagenes ./salida\n"
+            "O:       python procesar_imagenes.py --input-dir ./imagenes --output-dir ./salida\n"
+            "O:       python procesar_imagenes.py --interactive"
+        )
+
+    return input_dir, output_dir
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convierte imágenes a formato cuadrado y limita tamaño para datasets de entrenamiento."
+        description=(
+            "Convierte imágenes a formato cuadrado y limita tamaño para datasets de entrenamiento. "
+            "Toma automáticamente archivos compatibles dentro de la carpeta de entrada (recursivo)."
+        )
     )
-    parser.add_argument("input_dir", type=Path, help="Carpeta con imágenes de entrada")
-    parser.add_argument("output_dir", type=Path, help="Carpeta donde guardar imágenes procesadas")
+    parser.add_argument("input_dir", nargs="?", type=Path, help="Carpeta con imágenes de entrada")
+    parser.add_argument("output_dir", nargs="?", type=Path, help="Carpeta donde guardar imágenes procesadas")
+    parser.add_argument("--input-dir", dest="input_dir_flag", type=Path, help="Alternativa explícita a input_dir")
+    parser.add_argument("--output-dir", dest="output_dir_flag", type=Path, help="Alternativa explícita a output_dir")
+    parser.add_argument("--interactive", action="store_true", help="Pregunta en consola las rutas o usa la ruta actual")
     parser.add_argument("--size", type=int, default=1024, help="Tamaño final objetivo (default: 1024)")
     parser.add_argument(
         "--upscale",
@@ -173,19 +230,28 @@ def main() -> None:
     parser.add_argument("--quality", type=int, default=95, help="Calidad para JPG (default: 95)")
 
     args = parser.parse_args()
+    input_dir, output_dir = resolve_paths(args)
 
-    if not args.input_dir.exists() or not args.input_dir.is_dir():
-        raise SystemExit(f"La carpeta de entrada no existe o no es válida: {args.input_dir}")
+    if not input_dir.exists() or not input_dir.is_dir():
+        raise SystemExit(f"La carpeta de entrada no existe o no es válida: {input_dir}")
 
-    images = list(iter_images(args.input_dir))
+    images = list(iter_images(input_dir))
     if not images:
-        raise SystemExit("No se encontraron imágenes compatibles en la carpeta de entrada.")
+        extensiones = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise SystemExit(
+            "No se encontraron imágenes compatibles en la carpeta de entrada. "
+            f"Extensiones soportadas: {extensiones}"
+        )
+
+    print(f"Entrada: {input_dir}")
+    print(f"Salida:  {output_dir}")
+    print(f"Detectadas {len(images)} imágenes compatibles")
 
     for src in images:
-        dst = build_output_path(src, args.input_dir, args.output_dir, args.format)
+        dst = build_output_path(src, input_dir, output_dir, args.format)
         process_image(src, dst, target_size=args.size, upscale=args.upscale, quality=args.quality)
 
-    print(f"Procesadas {len(images)} imágenes en: {args.output_dir}")
+    print(f"Procesadas {len(images)} imágenes en: {output_dir}")
 
 
 if __name__ == "__main__":
